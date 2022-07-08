@@ -1,33 +1,28 @@
 from flask import Flask
-import json, botocore, botocore.session, boto3, requests,sched, time
-from aws_secretsmanager_caching import SecretCache, SecretCacheConfig 
-
+import json, boto3, requests,sched, time
+ 
 
 app = Flask(__name__)
 app.config["DEBUG"] = True
 
+AWS_ACCESS_KEY = ''
+AWS_SECRET_KEY = ''
 
 ##RETRIEVE SECRETS FROM SECRET MANAGER##
-client = botocore.session.get_session().create_client('secretsmanager')
-cache_config = SecretCacheConfig()
-cache = SecretCache( config = cache_config, client = client)
-
-##AWS SECRETS##
-AWSKeySecret = cache.get_secret_string('AWS_Keys') #Retrieve AWS secret
-jsonAWS = json.loads(AWSKeySecret) #jsonify secrets
-
-AWS_ACCESS_KEY = jsonAWS['AWS_Access_Key']
-AWS_SECRET_KEY = jsonAWS['AWS_Secret_Key']
+client = boto3.client('secretsmanager', region_name = 'us-east-1', aws_access_key_id = AWS_ACCESS_KEY, aws_secret_access_key=AWS_SECRET_KEY)
 
 ##SQS SECRETS##
-SQSSecret = cache.get_secret_string('SQS_QueueURL') 
-jsonSQS = json.loads(SQSSecret)
-
-SQS_Queue = jsonSQS['SQS_Queue']
+responseSQS = client.get_secret_value( 
+    SecretId = 'SQS_QueueURL'
+)
+jsonSQS = json.loads(responseSQS['SecretString'])
+Queue_url = jsonSQS['SQS_Queue']
 
 ##TRELLO SECRETS##
-trelloSecret = cache.get_secret_string('TrelloCredentials') 
-jsonTrello = json.loads(trelloSecret) 
+responseTrello = client.get_secret_value(
+    SecretId = 'TrelloCredentials'
+)
+jsonTrello = json.loads(responseTrello['SecretString'])
 
 trello_url = jsonTrello['trello_url']
 trello_token = jsonTrello['trello_token']
@@ -35,22 +30,22 @@ trello_key = jsonTrello['trello_key']
 trello_idList = jsonTrello['trello_idList']
 
 ##SLACK SECRETS##
-slackSecret = cache.get_secret_string('SlackWebHookURL') 
-jsonSlack = json.loads(slackSecret) 
+responseSlack = client.get_secret_value(
+    SecretId = 'SlackWebHookURL'
+)
+jsonSlack = json.loads(responseSlack['SecretString'])
+SlackWebHookURL = jsonSlack['slackWebHook']
 
-SlackWebHookURL = jsonSlack['slackWebHook'] 
-
-##Queue Connections##
+##SQS Queue Connections##
 sqs = boto3.client('sqs', region_name='us-east-1', aws_access_key_id = AWS_ACCESS_KEY , aws_secret_access_key=AWS_SECRET_KEY)
-queue_url = SQS_Queue
+queue_url = Queue_url
 
 
 s = sched.scheduler(time.time, time.sleep) #Scheduler 
 
 @app.route('/', methods=['POST'])
-#recieve message from SQS Queue
-def dequeue_message():       
-    response = sqs.receive_message(
+def dequeue_message(): #recieve message from SQS Queue       
+    response = sqs.receive_message( 
         QueueUrl=queue_url,
         AttributeNames=[
             'SentTimestamp',
@@ -65,7 +60,7 @@ def dequeue_message():
         WaitTimeSeconds=0
     )
 
-    messageAsDictionary = response
+    messageAsDictionary = response #Convert message to dictionary
     if 'Messages' in messageAsDictionary:
         message = messageFormatter(response)    
         
@@ -83,7 +78,7 @@ def messageFormatter(response): #Formating message so it only sends the bug name
     
         
     receipt_handle = message['ReceiptHandle']
-    sqs.delete_message(
+    sqs.delete_message( #Delete message from Queue
         QueueUrl=queue_url,
         ReceiptHandle=receipt_handle
     )
